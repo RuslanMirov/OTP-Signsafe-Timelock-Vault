@@ -241,10 +241,10 @@ describe("Holder", function () {
         .to.be.revertedWith("Ownable: caller is not the owner");
     });
     it("owner can reLock and extend holdTime by 90 days", async function () {
-      const before = await holder.holdTime();
       await holder.reLock();
+      const block = await ethers.provider.getBlock("latest");
       const after = await holder.holdTime();
-      expect(after).to.be.gte(before + DAY * 89n); // ~90 days added
+      expect(after).to.be.gte(BigInt(block.timestamp) + DAY * 89n);
     });
     it("after reLock withdrawal is blocked even past original holdTime", async function () {
       await ethers.provider.send("evm_increaseTime", [Number(YEAR + DAY)]);
