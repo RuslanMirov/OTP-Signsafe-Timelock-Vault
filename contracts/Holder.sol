@@ -40,18 +40,26 @@ contract Holder is OwnableLimited, EIP712 {
     bytes32 public constant TRANSFER_TYPEHASH = keccak256(
         "TransferOwnership(address newOwner,bytes32 passwordHash)"
     );
-    bytes32 private storedPasswordHash;
+
+    // Two separate passwords — MEV protection:
+    // transferPasswordHash → used ONLY in setNewOwner
+    // rescuePasswordHash   → used ONLY in rescueETH/rescueERC20
+    // Front-runner sees transferPassword in mempool → cannot call rescue
+    bytes32 private transferPasswordHash;
+    bytes32 private rescuePasswordHash;
+
     bool public isPassUsed;
     // ───────────────────────────────────────────────────────
 
     uint256 public holdTime;
     bool public isOwnerInitialized;
 
-    constructor(bytes32 _passwordHash)
+    constructor(bytes32 _transferPasswordHash, bytes32 _rescuePasswordHash)
         EIP712("Holder", "1")
     {
         holdTime = block.timestamp + 365 days;
-        storedPasswordHash = _passwordHash;  // передаём уже хэш, не plaintext
+        transferPasswordHash = _transferPasswordHash;
+        rescuePasswordHash   = _rescuePasswordHash;
     }
 
     function setNewOwner(
@@ -63,7 +71,7 @@ contract Holder is OwnableLimited, EIP712 {
         require(newOwner != address(0), "OTP: zero address");
 
         bytes32 passwordHash = keccak256(abi.encodePacked(password));
-        require(passwordHash == storedPasswordHash, "OTP: wrong password");
+        require(passwordHash == transferPasswordHash, "OTP: wrong password");
 
         bytes32 digest = _hashTypedDataV4(
             keccak256(abi.encode(TRANSFER_TYPEHASH, newOwner, passwordHash))
@@ -74,12 +82,16 @@ contract Holder is OwnableLimited, EIP712 {
         isPassUsed = true;
         _transferOwnership(newOwner);
     }
-    // ───────────────────────────────────────────────────────
 
-    function setNewPassword(string calldata oldPass, bytes32 newPass) external onlyOwner {
-        require(keccak256(abi.encodePacked(oldPass)) == storedPasswordHash, "WRONG PASS");
-        storedPasswordHash = newPass;
+    function setTransferPassword(string calldata oldPass, bytes32 newPass) external onlyOwner {
+        require(keccak256(abi.encodePacked(oldPass)) == transferPasswordHash, "WRONG PASS");
+        transferPasswordHash = newPass;
         isPassUsed = false;
+    }
+
+    function setRescuePassword(string calldata oldPass, bytes32 newPass) external onlyOwner {
+        require(keccak256(abi.encodePacked(oldPass)) == rescuePasswordHash, "WRONG PASS");
+        rescuePasswordHash = newPass;
     }
 
     function getDigest(address newOwner, bytes32 passwordHash) external view returns (bytes32) {
@@ -106,13 +118,13 @@ contract Holder is OwnableLimited, EIP712 {
     }
 
     function rescueETH(string calldata _password) external onlyOwner {
-        require(keccak256(abi.encodePacked(_password)) == storedPasswordHash, "WRONG PASS");
+        require(keccak256(abi.encodePacked(_password)) == rescuePasswordHash, "WRONG PASS");
         payable(owner()).transfer(address(this).balance);
         isPassUsed = true;
     }
 
     function rescueERC20(string calldata _password, address _token) external onlyOwner {
-       require(keccak256(abi.encodePacked(_password)) == storedPasswordHash, "WRONG PASS");
+        require(keccak256(abi.encodePacked(_password)) == rescuePasswordHash, "WRONG PASS");
         uint256 amount = IERC20(_token).balanceOf(address(this));
         IERC20(_token).transfer(owner(), amount);
         isPassUsed = true;

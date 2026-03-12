@@ -1,41 +1,44 @@
-# Why need extra password ?
+# Holder — EIP-712 Gasless Ownership Transfer with OTP Protection
 
+## Why?
+If somebody steals your private keys, they can't withdraw — funds are time-locked.
+You can transfer ownership to a fresh wallet via a gasless signed tx submitted
+by anyone — even through the public mempool.
+
+## Two Passwords — MEV Protection
+A single password would be dangerous: a front-runner seeing your `setNewOwner`
+tx in the mempool could use the exposed password to call `rescueETH` before your tx mines.
+
+Two separate secrets eliminate this:
+
+| Password | Used In | Exposed When |
+|----------|---------|--------------|
+| `transferPassword` | `setNewOwner` | Mempool — but rescue requires the other password |
+| `rescuePassword` | `rescueETH` / `rescueERC20` | Only when funds already withdrawn |
+
+Front-runner sees `transferPassword` → can't rescue (wrong password).
+Front-runner tries to redirect `newOwner` → signature invalid (committed to specific address).
+
+## How Ownership Transfer Works
 ```
-This is part of another big project for case if somebody steal owner private keys he can change owner by send gas less tx + flashbots RPC
-for avoid get password in mempool from listen bots with his stolen keys
+owner signs off-chain: { newOwner, hash(transferPassword) }
+anyone submits on-chain: setNewOwner(newOwner, transferPassword, signature)
+contract verifies: hash(password) matches + signature is from owner + OTP not used
 ```
+- Swapping `newOwner`, wrong password, or replaying the signature all revert
+- Signature is bound to `chainId` + `verifyingContract` — can't be used elsewhere
+- OTP burned after use — rotate via `setTransferPassword(oldPass, newHash)` to rearm
 
-# EIP-712 Ownership Transfer with One-Time Password
+## Recovery Paths
 ```
-
-Transfer ownership gaslessly — owner signs off-chain, anyone can submit the tx.
-
-How it works
-
-The owner signs a typed EIP-712 struct committing to a specific `newOwner` and a `passwordHash`.
-To execute, the submitter must provide the matching plain-text password.
-The password is hashed on-chain and compared. Once used, the OTP is burned forever.
-
-```
-
-```
-
-owner signs: { newOwner, hash(password) }
-anyone calls: transferOwnership(newOwner, password, signature)
-contract checks: hash(password) matches + signature is from owner + not already used
-
-Swapping `newOwner`, using a wrong password, or replaying the same signature all revert.
-The signature is also bound to `chainId` and `verifyingContract` so it can't be used elsewhere.
-
-To rotate: owner calls `setPassword(newPassword)` which resets the OTP for a fresh transfer.
+Keys stolen + you know passwords → setNewOwner to fresh wallet (public mempool is safe)
+Keys stolen + forgot password    → wait for holdTime to expire → withdrawETH
+Urgent + keys safe               → rescueETH(rescuePassword) — bypasses holdTime
 ```
 
 ## Run
-
 ```bash
 nvm use 22
 npm i
 npx hardhat test
 ```
-
-
