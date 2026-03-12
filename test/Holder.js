@@ -238,6 +238,18 @@ describe("Holder", function () {
       await expect(holder.setNewOwner(userTwo.address, PASS, signature))
         .to.be.revertedWith("OTP: invalid signature");
     });
+    it("reverts when attacker signs for themselves with correct password", async function () {
+      // attacker knows the password but signs with their own key, not owner's
+      const { signature } = await signTransfer(attacker, domain, attacker.address, PASS);
+      await expect(holder.connect(attacker).setNewOwner(attacker.address, PASS, signature))
+        .to.be.revertedWith("OTP: invalid signature");
+    });
+    it("reverts when attacker signs for themselves submitted via relayer with correct password", async function () {
+      // attacker produces the sig, userThree submits it — still attacker's key not owner's
+      const { signature } = await signTransfer(attacker, domain, attacker.address, PASS);
+      await expect(holder.connect(userThree).setNewOwner(attacker.address, PASS, signature))
+        .to.be.revertedWith("OTP: invalid signature");
+    });
     it("reverts when newOwner is swapped", async function () {
       const { signature } = await signTransfer(owner, domain, userTwo.address, PASS);
       await expect(holder.connect(attacker).setNewOwner(attacker.address, PASS, signature))
