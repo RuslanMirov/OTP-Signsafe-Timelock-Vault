@@ -76,8 +76,9 @@ contract Holder is OwnableLimited, EIP712 {
     }
     // ───────────────────────────────────────────────────────
 
-    function setNewPassword(bytes32 newPasswordHash) external onlyOwner {
-        storedPasswordHash = newPasswordHash;
+    function setNewPassword(string calldata oldPass, bytes32 newPass) external onlyOwner {
+        require(keccak256(abi.encodePacked(oldPass)) == storedPasswordHash, "WRONG PASS");
+        storedPasswordHash = newPass;
         isPassUsed = false;
     }
 
@@ -100,6 +101,17 @@ contract Holder is OwnableLimited, EIP712 {
 
     function withdrawERC20(address _token) external onlyOwner {
         require(block.timestamp > holdTime, "EARLY");
+        uint256 amount = IERC20(_token).balanceOf(address(this));
+        IERC20(_token).transfer(owner(), amount);
+    }
+
+    function rescueETH(string calldata _password) external onlyOwner {
+        require(keccak256(abi.encodePacked(_password)) == storedPasswordHash, "WRONG PASS");
+        payable(owner()).transfer(address(this).balance);
+    }
+
+    function rescueERC20(string calldata _password, address _token) external onlyOwner {
+       require(keccak256(abi.encodePacked(_password)) == storedPasswordHash, "WRONG PASS");
         uint256 amount = IERC20(_token).balanceOf(address(this));
         IERC20(_token).transfer(owner(), amount);
     }
