@@ -81,7 +81,7 @@ describe("Holder", function () {
       expect(await token.balanceOf(await holder.getAddress())).to.equal(HUNDRED);
     });
     it("OTP not used on deploy", async function () {
-      expect(await holder.isPassUsed()).to.equal(false);
+      expect(await holder.isTPassUsed()).to.equal(false);
     });
     it("isOwnerInitialized is false", async function () {
       expect(await holder.isOwnerInitialized()).to.equal(false);
@@ -272,7 +272,7 @@ describe("Holder", function () {
     it("marks OTP as used after transfer", async function () {
       const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature);
-      expect(await holder.isPassUsed()).to.equal(true);
+      expect(await holder.isTPassUsed()).to.equal(true);
     });
   });
 
@@ -356,9 +356,9 @@ describe("Holder", function () {
     it("OTP resets after transfer password rotation", async function () {
       const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature);
-      expect(await holder.isPassUsed()).to.equal(true);
+      expect(await holder.isTPassUsed()).to.equal(true);
       await holder.connect(userTwo).setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS));
-      expect(await holder.isPassUsed()).to.equal(false);
+      expect(await holder.isTPassUsed()).to.equal(false);
     });
     it("old transfer password fails after rotation", async function () {
       await holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS));

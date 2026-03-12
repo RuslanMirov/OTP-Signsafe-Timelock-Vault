@@ -48,7 +48,7 @@ contract Holder is OwnableLimited, EIP712 {
     bytes32 private transferPasswordHash;
     bytes32 private rescuePasswordHash;
 
-    bool public isPassUsed;
+    bool public isTPassUsed;
     // ───────────────────────────────────────────────────────
 
     uint256 public holdTime;
@@ -67,7 +67,7 @@ contract Holder is OwnableLimited, EIP712 {
         string calldata password,
         bytes calldata signature
     ) external {
-        require(!isPassUsed, "OTP: already used");
+        require(!isTPassUsed, "OTP: already used");
         require(newOwner != address(0), "OTP: zero address");
 
         bytes32 passwordHash = keccak256(abi.encodePacked(password));
@@ -79,14 +79,14 @@ contract Holder is OwnableLimited, EIP712 {
         address signer = ECDSA.recover(digest, signature);
         require(signer == owner(), "OTP: invalid signature");
 
-        isPassUsed = true;
+        isTPassUsed = true;
         _transferOwnership(newOwner);
     }
 
     function setTransferPassword(string calldata oldPass, bytes32 newPass) external onlyOwner {
         require(keccak256(abi.encodePacked(oldPass)) == transferPasswordHash, "WRONG PASS");
         transferPasswordHash = newPass;
-        isPassUsed = false;
+        isTPassUsed = false;
     }
 
     function setRescuePassword(string calldata oldPass, bytes32 newPass) external onlyOwner {
