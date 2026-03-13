@@ -3,11 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-
-interface IERC20 {
-    function balanceOf(address account) external view returns (uint256);
-    function transfer(address recipient, uint256 amount) external returns (bool);
-}
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 contract OwnableLimited {
     address private _owner;
@@ -35,6 +31,7 @@ contract OwnableLimited {
 }
 
 contract Holder is OwnableLimited, EIP712 {
+    using SafeERC20 for IERC20;
 
     // ── OTP ────────────────────────────────────────────────
     bytes32 public constant TRANSFER_TYPEHASH = keccak256(
@@ -108,24 +105,26 @@ contract Holder is OwnableLimited, EIP712 {
 
     function withdrawETH() external onlyOwner {
         require(block.timestamp > holdTime, "EARLY");
-        payable(owner()).transfer(address(this).balance);
+        (bool ok,) = payable(owner()).call{value: address(this).balance}("");
+        require(ok, "ETH transfer failed");
     }
 
     function withdrawERC20(address _token) external onlyOwner {
         require(block.timestamp > holdTime, "EARLY");
         uint256 amount = IERC20(_token).balanceOf(address(this));
-        IERC20(_token).transfer(owner(), amount);
+        IERC20(_token).safeTransfer(owner(), amount);
     }
 
     function rescueETH(string calldata _password) external onlyOwner {
         require(keccak256(abi.encodePacked(_password)) == rescuePasswordHash, "WRONG PASS");
-        payable(owner()).transfer(address(this).balance);
+        (bool ok,) = payable(owner()).call{value: address(this).balance}("");
+        require(ok, "ETH transfer failed");
     }
 
     function rescueERC20(string calldata _password, address _token) external onlyOwner {
         require(keccak256(abi.encodePacked(_password)) == rescuePasswordHash, "WRONG PASS");
         uint256 amount = IERC20(_token).balanceOf(address(this));
-        IERC20(_token).transfer(owner(), amount);
+        IERC20(_token).safeTransfer(owner(), amount);
     }
 
     function reLock() external onlyOwner {

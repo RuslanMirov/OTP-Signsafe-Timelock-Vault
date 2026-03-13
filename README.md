@@ -42,3 +42,9 @@ nvm use 22
 npm i
 npx hardhat test
 ```
+
+## Flatt for deploy 
+
+```
+npx hardhat flatten contracts/Holder.sol > Holder_flat.sol
+```
