@@ -50,8 +50,7 @@ contract Holder is OwnableLimited, EIP712 {
     // and also he cant replace new owner with his address because its also require 
     // 7 days wait, so if owner see atemption he can migrate to new wallet
     mapping(bytes32 => uint256) public passwordRequests; 
-    uint256 public constant CHANGE_DELAY = 1 days;
-    uint256 public constant WHITELIST_DELAY = 7 days;
+    uint256 public constant CHANGE_DELAY = 7 days;
     mapping(address => uint256) private whiteListTime;
     mapping(address => bool) public whiteList;
 
@@ -129,7 +128,7 @@ contract Holder is OwnableLimited, EIP712 {
 
     function setNewWLOwner(address _newWLAddress) external onlyOwner {
         require(whiteListTime[_newWLAddress] != 0, "No request found");
-        require(block.timestamp >= whiteListTime[_newWLAddress] + WHITELIST_DELAY, "Too early");
+        require(block.timestamp >= whiteListTime[_newWLAddress] + CHANGE_DELAY, "Too early");
         whiteList[_newWLAddress] = true;
         delete whiteListTime[_newWLAddress];
     }

@@ -20,7 +20,7 @@ Two separate secrets eliminate this:
 
 Front-runner sees `transferPassword` → can't rescue (wrong password).  
 Front-runner tries to redirect `newOwner` → signature invalid (committed to specific address).  
-Front-runner tries to rotate `transferPassword` → blocked by 1-day delay.
+Front-runner tries to rotate `transferPassword` → blocked by 7-day delay.
 
 ---
 
@@ -28,18 +28,18 @@ Front-runner tries to rotate `transferPassword` → blocked by 1-day delay.
 
 Even if a front-runner sees `transferPassword` in the mempool, they **cannot** call
 `setTransferPassword` to invalidate it — because password rotation requires a
-**24-hour timelock**:
+**7-day timelock**:
 
 ```
 1. owner calls applyNewPassword(newPassHash)   ← announces intent on-chain
-2. wait 1 day
+2. wait 7 days
 3. owner calls setTransferPassword(oldPass, newPassHash)  ← rotation executes
 ```
 
 A front-runner seeing `transferPassword` in the mempool has no pre-submitted
 `applyNewPassword` request, so `setTransferPassword` reverts with `No request found`.
 
-Same 1-day delay applies to `setRescuePassword`.
+Same 7-day delay applies to `setRescuePassword`.
 
 ---
 
@@ -77,7 +77,7 @@ contract verifies:
 
 - Swapping `newOwner`, wrong password, or replaying the signature all revert
 - Signature is bound to `chainId` + `verifyingContract` — can't be used elsewhere
-- OTP burned after use — rotate via `setTransferPassword` (requires 1-day delay) to rearm
+- OTP burned after use — rotate via `setTransferPassword` (requires 7-day delay) to rearm
 
 ---
 
@@ -88,6 +88,41 @@ Keys stolen + you know transferPassword → setNewOwner to whitelisted wallet (m
 Keys stolen + forgot transferPassword   → wait for holdTime to expire → withdrawETH
 Urgent + keys safe                      → rescueETH(rescuePassword) — bypasses holdTime
 ```
+
+---
+
+## ⚠️ If You Overslept the 7-Day Window
+
+If you missed the monitoring window and the attacker's `applyNewPassword` or
+`applyNewWLOwner` request has already matured — **do not submit your recovery tx
+through the public mempool**. The attacker is watching and will front-run any tx
+that exposes your password or triggers an ownership transfer.
+
+**Use a private RPC instead:**
+
+| Provider | Endpoint |
+|----------|----------|
+| Flashbots Protect | `https://rpc.flashbots.net` |
+| MEV Blocker | `https://rpc.mevblocker.io` |
+| Beaverbuild Private | `https://rpc.beaverbuild.org` |
+
+Private RPCs route your tx directly to block builders, bypassing the public
+mempool entirely. Your calldata — including the plaintext password — is never
+visible to searchers or front-runners.
+
+**Step-by-step:**
+```
+1. Switch your wallet RPC to a private endpoint (e.g. Flashbots Protect)
+2. Submit one of:
+   - setNewOwner(yourWhitelistedWallet, transferPassword, signature)
+   - rescueETH(rescuePassword)  ← if you need funds out immediately
+3. Tx lands in the next block with zero mempool exposure
+```
+
+> Even if the attacker's `setNewWLOwner` or `setTransferPassword` tx is pending —
+> your `setNewOwner` or `rescueETH` using the **current valid password** still
+> executes correctly as long as their tx hasn't confirmed yet.
+> Submitting via private RPC wins the race without a bidding war.
 
 ---
 
@@ -112,12 +147,13 @@ Constructor arguments:
 |--------|--------|
 | Front-run `rescueETH` with `transferPassword` | ❌ Wrong password |
 | Front-run `setTransferPassword` with exposed password | ❌ No `applyNewPassword` request → reverts |
-| Submit `applyNewPassword` then immediately rotate | ❌ 1-day delay not satisfied |
+| Submit `applyNewPassword` then immediately rotate | ❌ 7-day delay not satisfied |
 | Redirect `newOwner` to attacker address | ❌ Not whitelisted |
 | Redirect `newOwner` to different whitelisted address | ❌ Signature committed to original `newOwner` |
 | Replay used OTP signature | ❌ `isTPassUsed == true` |
 | Use signature on different chain or contract | ❌ EIP-712 binds `chainId` + `verifyingContract` |
-| `applyNewWLOwner(attackerWallet)` then wait 7 days | ⚠️ Owner has 7 days to detect and migrate |
+| `applyNewWLOwner(attackerWallet)` — owner detects in time | ✅ Migrate before 7 days expire |
+| Owner misses 7-day window, attacker request matures | ⚠️ Use private RPC to submit recovery tx |
 
 ---
 

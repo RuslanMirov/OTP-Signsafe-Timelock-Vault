@@ -44,18 +44,21 @@ describe("Holder", function () {
   const TEN_ETH = ethers.parseEther("10");
   const HUNDRED = ethers.parseEther("100");
   const DAY     = 86400n;
+  const WEEK    = DAY * 7n;   // CHANGE_DELAY = 7 days (passwords + whitelist unified)
   const YEAR    = DAY * 365n;
 
   // ── helpers ──────────────────────────────────────────────────────
+  // applyNewPassword + wait 7 days (CHANGE_DELAY)
   async function applyAndWaitPassword(h, newPassHash) {
     await h.applyNewPassword(newPassHash);
-    await ethers.provider.send("evm_increaseTime", [Number(DAY + 1n)]);
+    await ethers.provider.send("evm_increaseTime", [Number(WEEK + 1n)]);
     await ethers.provider.send("evm_mine", []);
   }
 
+  // applyNewWLOwner + wait 7 days (CHANGE_DELAY) + setNewWLOwner
   async function applyAndWaitWL(h, addr) {
     await h.applyNewWLOwner(addr);
-    await ethers.provider.send("evm_increaseTime", [Number(DAY * 7n + 1n)]);
+    await ethers.provider.send("evm_increaseTime", [Number(WEEK + 1n)]);
     await ethers.provider.send("evm_mine", []);
     await h.setNewWLOwner(addr);
   }
@@ -70,10 +73,10 @@ describe("Holder", function () {
 
     const HolderFactory = await ethers.getContractFactory("Holder");
     holder = await HolderFactory.connect(owner).deploy(
-      owner.address,            // _initialOwner
+      owner.address,          // _initialOwner
       passHash(TRANSFER_PASS),
       passHash(RESCUE_PASS),
-      userTwo.address           // _whiteListedOwner — whitelisted from deploy
+      userTwo.address         // _whiteListedOwner
     );
     await holder.waitForDeployment();
 
@@ -115,7 +118,6 @@ describe("Holder", function () {
     });
 
     it("rescuePassword exposed in mempool cannot be used for setNewOwner", async function () {
-      // userTwo is whitelisted — password check happens, not whitelist check
       const { signature } = await signTransfer(owner, domain, userTwo.address, RESCUE_PASS);
       await expect(
         holder.setNewOwner(userTwo.address, RESCUE_PASS, signature)
@@ -129,17 +131,16 @@ describe("Holder", function () {
       ).to.be.revertedWith("Not in White List");
     });
 
-    it("front-runner cannot call setTransferPassword — delay not satisfied", async function () {
-      // hacker has keys, sees TRANSFER_PASS in mempool, tries to rotate password immediately
-      // applyNewPassword was never called → "No request found"
+    it("front-runner cannot call setTransferPassword — no request found", async function () {
       await expect(
         holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
       ).to.be.revertedWith("No request found");
     });
 
-    it("front-runner cannot rotate password even with applyNewPassword if < 1 day", async function () {
+    it("front-runner cannot rotate password even with applyNewPassword if < 7 days", async function () {
       await holder.applyNewPassword(passHash(NEW_TRANSFER_PASS));
-      // no time advance — immediately try
+      await ethers.provider.send("evm_increaseTime", [Number(DAY * 3n)]);
+      await ethers.provider.send("evm_mine", []);
       await expect(
         holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
       ).to.be.revertedWith("Too early");
@@ -162,12 +163,12 @@ describe("Holder", function () {
         holder.connect(attacker).setNewOwner(attacker.address, TRANSFER_PASS, attackSig)
       ).to.be.revertedWith("Not in White List");
 
-      // Attack D: rotate transferPassword without 1-day delay
+      // Attack D: rotate transferPassword without 7-day delay
       await expect(
         holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
       ).to.be.revertedWith("No request found");
 
-      // Original tx still valid — ownership transfers, funds intact
+      // Original tx still valid
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature);
       expect(await holder.owner()).to.equal(userTwo.address);
       expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(TEN_ETH);
@@ -184,7 +185,7 @@ describe("Holder", function () {
 
     it("non-owner cannot setNewWLOwner", async function () {
       await holder.applyNewWLOwner(attacker.address);
-      await ethers.provider.send("evm_increaseTime", [Number(DAY * 7n + 1n)]);
+      await ethers.provider.send("evm_increaseTime", [Number(WEEK + 1n)]);
       await ethers.provider.send("evm_mine", []);
       await expect(
         holder.connect(attacker).setNewWLOwner(attacker.address)
@@ -208,7 +209,7 @@ describe("Holder", function () {
 
     it("owner can whitelist after 7-day delay", async function () {
       await holder.applyNewWLOwner(userThree.address);
-      await ethers.provider.send("evm_increaseTime", [Number(DAY * 7n + 1n)]);
+      await ethers.provider.send("evm_increaseTime", [Number(WEEK + 1n)]);
       await ethers.provider.send("evm_mine", []);
       await holder.setNewWLOwner(userThree.address);
       expect(await holder.whiteList(userThree.address)).to.equal(true);
@@ -216,7 +217,7 @@ describe("Holder", function () {
 
     it("setNewWLOwner consumes the request — cannot call twice", async function () {
       await holder.applyNewWLOwner(userThree.address);
-      await ethers.provider.send("evm_increaseTime", [Number(DAY * 7n + 1n)]);
+      await ethers.provider.send("evm_increaseTime", [Number(WEEK + 1n)]);
       await ethers.provider.send("evm_mine", []);
       await holder.setNewWLOwner(userThree.address);
       await expect(
@@ -419,7 +420,6 @@ describe("Holder", function () {
         .to.be.revertedWith("Not in White List");
     });
     it("reverts when newOwner is swapped between whitelisted addresses", async function () {
-      // whitelist userThree too, then try to swap sig for userTwo → userThree
       await applyAndWaitWL(holder, userThree.address);
       const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
       await expect(holder.setNewOwner(userThree.address, TRANSFER_PASS, signature))
@@ -455,8 +455,10 @@ describe("Holder", function () {
       ).to.be.revertedWith("No request found");
     });
 
-    it("cannot setTransferPassword before 1-day delay", async function () {
+    it("cannot setTransferPassword before 7-day delay", async function () {
       await holder.applyNewPassword(passHash(NEW_TRANSFER_PASS));
+      await ethers.provider.send("evm_increaseTime", [Number(DAY * 3n)]);
+      await ethers.provider.send("evm_mine", []);
       await expect(
         holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
       ).to.be.revertedWith("Too early");
@@ -483,7 +485,7 @@ describe("Holder", function () {
       ).to.be.revertedWith("WRONG PASS");
     });
 
-    it("owner can rotate transfer password after 1-day delay", async function () {
+    it("owner can rotate transfer password after 7-day delay", async function () {
       await applyAndWaitPassword(holder, passHash(NEW_TRANSFER_PASS));
       await expect(
         holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
@@ -536,9 +538,12 @@ describe("Holder", function () {
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, sig1);
       expect(await holder.owner()).to.equal(userTwo.address);
 
-      // whitelist userThree + rotate password
-      await applyAndWaitWL(holder.connect(userTwo), userThree.address);
-      await applyAndWaitPassword(holder.connect(userTwo), passHash(NEW_TRANSFER_PASS));
+      // batch both WL + password requests, wait one 7-day window for both
+      await holder.connect(userTwo).applyNewWLOwner(userThree.address);
+      await holder.connect(userTwo).applyNewPassword(passHash(NEW_TRANSFER_PASS));
+      await ethers.provider.send("evm_increaseTime", [Number(WEEK + 1n)]);
+      await ethers.provider.send("evm_mine", []);
+      await holder.connect(userTwo).setNewWLOwner(userThree.address);
       await holder.connect(userTwo).setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS));
 
       // transfer 2: userTwo → userThree
@@ -565,8 +570,10 @@ describe("Holder", function () {
       ).to.be.revertedWith("No request found");
     });
 
-    it("cannot setRescuePassword before 1-day delay", async function () {
+    it("cannot setRescuePassword before 7-day delay", async function () {
       await holder.applyNewPassword(passHash(NEW_RESCUE_PASS));
+      await ethers.provider.send("evm_increaseTime", [Number(DAY * 3n)]);
+      await ethers.provider.send("evm_mine", []);
       await expect(
         holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS))
       ).to.be.revertedWith("Too early");
@@ -593,7 +600,7 @@ describe("Holder", function () {
       ).to.be.revertedWith("WRONG PASS");
     });
 
-    it("owner can rotate rescue password after 1-day delay", async function () {
+    it("owner can rotate rescue password after 7-day delay", async function () {
       await applyAndWaitPassword(holder, passHash(NEW_RESCUE_PASS));
       await expect(
         holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS))
@@ -622,10 +629,9 @@ describe("Holder", function () {
     });
 
     it("passwordRequests slot shared — transfer and rescue hashes are independent", async function () {
-      // apply both, advance time, both usable independently
       await holder.applyNewPassword(passHash(NEW_TRANSFER_PASS));
       await holder.applyNewPassword(passHash(NEW_RESCUE_PASS));
-      await ethers.provider.send("evm_increaseTime", [Number(DAY + 1n)]);
+      await ethers.provider.send("evm_increaseTime", [Number(WEEK + 1n)]);
       await ethers.provider.send("evm_mine", []);
       await holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS));
       await holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS));
