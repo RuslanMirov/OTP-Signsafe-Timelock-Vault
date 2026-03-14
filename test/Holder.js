@@ -32,7 +32,6 @@ function passHash(pass) {
 // ───────────────────────────────────────────────────────────────────
 
 describe("Holder", function () {
-  // Two separate passwords — core MEV protection
   const TRANSFER_PASS     = "transfer-secret-123";
   const RESCUE_PASS       = "rescue-secret-456";
   const NEW_TRANSFER_PASS = "new-transfer-secret";
@@ -56,6 +55,7 @@ describe("Holder", function () {
 
     const HolderFactory = await ethers.getContractFactory("Holder");
     holder = await HolderFactory.connect(owner).deploy(
+      owner.address,              // <-- _initialOwner
       passHash(TRANSFER_PASS),
       passHash(RESCUE_PASS)
     );
@@ -83,21 +83,16 @@ describe("Holder", function () {
     it("OTP not used on deploy", async function () {
       expect(await holder.isTPassUsed()).to.equal(false);
     });
-    it("isOwnerInitialized is false", async function () {
-      expect(await holder.isOwnerInitialized()).to.equal(false);
-    });
   });
 
   // ──────────────────────────────────────────────────────────────────
   describe("MEV Protection — two password separation", function () {
 
     it("transferPassword exposed in mempool cannot be used for rescueETH", async function () {
-      // Front-runner sees TRANSFER_PASS in mempool — tries rescueETH → WRONG PASS
       await expect(holder.rescueETH(TRANSFER_PASS)).to.be.revertedWith("WRONG PASS");
     });
 
     it("rescuePassword exposed in mempool cannot be used for setNewOwner", async function () {
-      // Front-runner sees RESCUE_PASS in mempool — tries setNewOwner → OTP: wrong password
       const { signature } = await signTransfer(attacker, domain, attacker.address, RESCUE_PASS);
       await expect(
         holder.connect(attacker).setNewOwner(attacker.address, RESCUE_PASS, signature)
@@ -378,15 +373,12 @@ describe("Holder", function () {
       expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(0n);
     });
     it("chain of transfers works", async function () {
-      // transfer 1
       const { signature: sig1 } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, sig1);
       expect(await holder.owner()).to.equal(userTwo.address);
 
-      // rotate transfer password
       await holder.connect(userTwo).setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS));
 
-      // transfer 2
       const { signature: sig2 } = await signTransfer(userTwo, domain, userThree.address, NEW_TRANSFER_PASS);
       await holder.connect(userTwo).setNewOwner(userThree.address, NEW_TRANSFER_PASS, sig2);
       expect(await holder.owner()).to.equal(userThree.address);
@@ -467,20 +459,26 @@ describe("Holder", function () {
   });
 
   // ──────────────────────────────────────────────────────────────────
-  describe("initializeOwner", function () {
-    it("owner can initialize once", async function () {
-      await holder.initializeOwner(userTwo.address);
-      expect(await holder.owner()).to.equal(userTwo.address);
-      expect(await holder.isOwnerInitialized()).to.equal(true);
+  describe("constructor — _initialOwner", function () {
+    it("developer can deploy to a different initial owner", async function () {
+      const HolderFactory = await ethers.getContractFactory("Holder");
+      const h = await HolderFactory.connect(owner).deploy(
+        userTwo.address,
+        passHash(TRANSFER_PASS),
+        passHash(RESCUE_PASS)
+      );
+      await h.waitForDeployment();
+      expect(await h.owner()).to.equal(userTwo.address);
     });
-    it("cannot initialize twice", async function () {
-      await holder.initializeOwner(userTwo.address);
-      await expect(holder.connect(userTwo).initializeOwner(userThree.address))
-        .to.be.revertedWith("INITIALIZED");
-    });
-    it("non-owner cannot initialize", async function () {
-      await expect(holder.connect(userTwo).initializeOwner(userTwo.address))
-        .to.be.revertedWith("Ownable: caller is not the owner");
+    it("reverts if _initialOwner is zero address", async function () {
+      const HolderFactory = await ethers.getContractFactory("Holder");
+      await expect(
+        HolderFactory.connect(owner).deploy(
+          ethers.ZeroAddress,
+          passHash(TRANSFER_PASS),
+          passHash(RESCUE_PASS)
+        )
+      ).to.be.revertedWith("Ownable: new owner is the zero address");
     });
   });
 

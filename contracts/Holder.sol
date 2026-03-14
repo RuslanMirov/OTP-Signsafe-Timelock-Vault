@@ -49,14 +49,14 @@ contract Holder is OwnableLimited, EIP712 {
     // ───────────────────────────────────────────────────────
 
     uint256 public holdTime;
-    bool public isOwnerInitialized;
 
-    constructor(bytes32 _transferPasswordHash, bytes32 _rescuePasswordHash)
+    constructor(address _initialOwner, bytes32 _transferPasswordHash, bytes32 _rescuePasswordHash)
         EIP712("Holder", "1")
     {
         holdTime = block.timestamp + 365 days;
         transferPasswordHash = _transferPasswordHash;
         rescuePasswordHash   = _rescuePasswordHash;
+        _transferOwnership(_initialOwner);
     }
 
     function setNewOwner(
@@ -129,12 +129,6 @@ contract Holder is OwnableLimited, EIP712 {
 
     function reLock() external onlyOwner {
         holdTime = block.timestamp + 90 days;
-    }
-
-    function initializeOwner(address newOwner) external onlyOwner {
-        require(!isOwnerInitialized, "INITIALIZED");
-        _transferOwnership(newOwner);
-        isOwnerInitialized = true;
     }
 
     receive() external payable {}
