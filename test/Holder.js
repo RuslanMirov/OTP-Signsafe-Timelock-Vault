@@ -46,18 +46,34 @@ describe("Holder", function () {
   const DAY     = 86400n;
   const YEAR    = DAY * 365n;
 
+  // ── helpers ──────────────────────────────────────────────────────
+  async function applyAndWaitPassword(h, newPassHash) {
+    await h.applyNewPassword(newPassHash);
+    await ethers.provider.send("evm_increaseTime", [Number(DAY + 1n)]);
+    await ethers.provider.send("evm_mine", []);
+  }
+
+  async function applyAndWaitWL(h, addr) {
+    await h.applyNewWLOwner(addr);
+    await ethers.provider.send("evm_increaseTime", [Number(DAY * 7n + 1n)]);
+    await ethers.provider.send("evm_mine", []);
+    await h.setNewWLOwner(addr);
+  }
+  // ─────────────────────────────────────────────────────────────────
+
   async function deployAll() {
     [owner, userTwo, userThree, attacker] = await ethers.getSigners();
 
-    const TokenFactory  = await ethers.getContractFactory("TestToken");
-    token  = await TokenFactory.deploy(HUNDRED);
+    const TokenFactory = await ethers.getContractFactory("TestToken");
+    token = await TokenFactory.deploy(HUNDRED);
     await token.waitForDeployment();
 
     const HolderFactory = await ethers.getContractFactory("Holder");
     holder = await HolderFactory.connect(owner).deploy(
-      owner.address,              // <-- _initialOwner
+      owner.address,            // _initialOwner
       passHash(TRANSFER_PASS),
-      passHash(RESCUE_PASS)
+      passHash(RESCUE_PASS),
+      userTwo.address           // _whiteListedOwner — whitelisted from deploy
     );
     await holder.waitForDeployment();
 
@@ -83,6 +99,12 @@ describe("Holder", function () {
     it("OTP not used on deploy", async function () {
       expect(await holder.isTPassUsed()).to.equal(false);
     });
+    it("_whiteListedOwner is whitelisted from deploy", async function () {
+      expect(await holder.whiteList(userTwo.address)).to.equal(true);
+    });
+    it("attacker is not whitelisted", async function () {
+      expect(await holder.whiteList(attacker.address)).to.equal(false);
+    });
   });
 
   // ──────────────────────────────────────────────────────────────────
@@ -93,17 +115,34 @@ describe("Holder", function () {
     });
 
     it("rescuePassword exposed in mempool cannot be used for setNewOwner", async function () {
-      const { signature } = await signTransfer(attacker, domain, attacker.address, RESCUE_PASS);
+      // userTwo is whitelisted — password check happens, not whitelist check
+      const { signature } = await signTransfer(owner, domain, userTwo.address, RESCUE_PASS);
       await expect(
-        holder.connect(attacker).setNewOwner(attacker.address, RESCUE_PASS, signature)
+        holder.setNewOwner(userTwo.address, RESCUE_PASS, signature)
       ).to.be.revertedWith("OTP: wrong password");
     });
 
-    it("attacker cannot drain even knowing transferPassword — no valid sig", async function () {
+    it("attacker address not whitelisted — blocked before signature check", async function () {
       const { signature } = await signTransfer(attacker, domain, attacker.address, TRANSFER_PASS);
       await expect(
         holder.connect(attacker).setNewOwner(attacker.address, TRANSFER_PASS, signature)
-      ).to.be.revertedWith("OTP: invalid signature");
+      ).to.be.revertedWith("Not in White List");
+    });
+
+    it("front-runner cannot call setTransferPassword — delay not satisfied", async function () {
+      // hacker has keys, sees TRANSFER_PASS in mempool, tries to rotate password immediately
+      // applyNewPassword was never called → "No request found"
+      await expect(
+        holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
+      ).to.be.revertedWith("No request found");
+    });
+
+    it("front-runner cannot rotate password even with applyNewPassword if < 1 day", async function () {
+      await holder.applyNewPassword(passHash(NEW_TRANSFER_PASS));
+      // no time advance — immediately try
+      await expect(
+        holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
+      ).to.be.revertedWith("Too early");
     });
 
     it("full MEV scenario: all attack vectors fail, original tx succeeds", async function () {
@@ -117,16 +156,86 @@ describe("Holder", function () {
         holder.rescueERC20(TRANSFER_PASS, await token.getAddress())
       ).to.be.revertedWith("WRONG PASS");
 
-      // Attack C: setNewOwner to attacker wallet with their own sig
+      // Attack C: setNewOwner to attacker (not whitelisted)
       const { signature: attackSig } = await signTransfer(attacker, domain, attacker.address, TRANSFER_PASS);
       await expect(
         holder.connect(attacker).setNewOwner(attacker.address, TRANSFER_PASS, attackSig)
-      ).to.be.revertedWith("OTP: invalid signature");
+      ).to.be.revertedWith("Not in White List");
+
+      // Attack D: rotate transferPassword without 1-day delay
+      await expect(
+        holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
+      ).to.be.revertedWith("No request found");
 
       // Original tx still valid — ownership transfers, funds intact
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature);
       expect(await holder.owner()).to.equal(userTwo.address);
       expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(TEN_ETH);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  describe("Whitelist", function () {
+    it("non-owner cannot applyNewWLOwner", async function () {
+      await expect(
+        holder.connect(attacker).applyNewWLOwner(attacker.address)
+      ).to.be.revertedWith("Ownable: caller is not the owner");
+    });
+
+    it("non-owner cannot setNewWLOwner", async function () {
+      await holder.applyNewWLOwner(attacker.address);
+      await ethers.provider.send("evm_increaseTime", [Number(DAY * 7n + 1n)]);
+      await ethers.provider.send("evm_mine", []);
+      await expect(
+        holder.connect(attacker).setNewWLOwner(attacker.address)
+      ).to.be.revertedWith("Ownable: caller is not the owner");
+    });
+
+    it("cannot setNewWLOwner without applyNewWLOwner first", async function () {
+      await expect(
+        holder.setNewWLOwner(userThree.address)
+      ).to.be.revertedWith("No request found");
+    });
+
+    it("cannot setNewWLOwner before 7-day delay", async function () {
+      await holder.applyNewWLOwner(userThree.address);
+      await ethers.provider.send("evm_increaseTime", [Number(DAY * 3n)]);
+      await ethers.provider.send("evm_mine", []);
+      await expect(
+        holder.setNewWLOwner(userThree.address)
+      ).to.be.revertedWith("Too early");
+    });
+
+    it("owner can whitelist after 7-day delay", async function () {
+      await holder.applyNewWLOwner(userThree.address);
+      await ethers.provider.send("evm_increaseTime", [Number(DAY * 7n + 1n)]);
+      await ethers.provider.send("evm_mine", []);
+      await holder.setNewWLOwner(userThree.address);
+      expect(await holder.whiteList(userThree.address)).to.equal(true);
+    });
+
+    it("setNewWLOwner consumes the request — cannot call twice", async function () {
+      await holder.applyNewWLOwner(userThree.address);
+      await ethers.provider.send("evm_increaseTime", [Number(DAY * 7n + 1n)]);
+      await ethers.provider.send("evm_mine", []);
+      await holder.setNewWLOwner(userThree.address);
+      await expect(
+        holder.setNewWLOwner(userThree.address)
+      ).to.be.revertedWith("No request found");
+    });
+
+    it("non-whitelisted address cannot be newOwner", async function () {
+      const { signature } = await signTransfer(owner, domain, userThree.address, TRANSFER_PASS);
+      await expect(
+        holder.setNewOwner(userThree.address, TRANSFER_PASS, signature)
+      ).to.be.revertedWith("Not in White List");
+    });
+
+    it("whitelisted address can be newOwner after 7-day delay", async function () {
+      await applyAndWaitWL(holder, userThree.address);
+      const { signature } = await signTransfer(owner, domain, userThree.address, TRANSFER_PASS);
+      await holder.setNewOwner(userThree.address, TRANSFER_PASS, signature);
+      expect(await holder.owner()).to.equal(userThree.address);
     });
   });
 
@@ -194,11 +303,13 @@ describe("Holder", function () {
         .to.be.revertedWith("Ownable: caller is not the owner");
     });
     it("rescue works after rescue password rotation", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_RESCUE_PASS));
       await holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS));
       await holder.rescueETH(NEW_RESCUE_PASS);
       expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(0n);
     });
     it("old rescue password fails after rotation", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_RESCUE_PASS));
       await holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS));
       await expect(holder.rescueETH(RESCUE_PASS)).to.be.revertedWith("WRONG PASS");
     });
@@ -229,11 +340,13 @@ describe("Holder", function () {
         .to.be.revertedWith("Ownable: caller is not the owner");
     });
     it("rescue ERC20 works after rescue password rotation", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_RESCUE_PASS));
       await holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS));
       await holder.rescueERC20(NEW_RESCUE_PASS, await token.getAddress());
       expect(await token.balanceOf(await holder.getAddress())).to.equal(0n);
     });
     it("old rescue password fails for ERC20 after rotation", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_RESCUE_PASS));
       await holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS));
       await expect(
         holder.rescueERC20(RESCUE_PASS, await token.getAddress())
@@ -290,24 +403,26 @@ describe("Holder", function () {
   });
 
   describe("setNewOwner — invalid signature", function () {
-    it("reverts when attacker signs", async function () {
+    it("reverts when attacker signs for whitelisted address", async function () {
       const { signature } = await signTransfer(attacker, domain, userTwo.address, TRANSFER_PASS);
       await expect(holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature))
         .to.be.revertedWith("OTP: invalid signature");
     });
-    it("reverts when attacker signs for themselves with correct password", async function () {
+    it("reverts when attacker signs for themselves (not whitelisted)", async function () {
       const { signature } = await signTransfer(attacker, domain, attacker.address, TRANSFER_PASS);
       await expect(holder.connect(attacker).setNewOwner(attacker.address, TRANSFER_PASS, signature))
-        .to.be.revertedWith("OTP: invalid signature");
+        .to.be.revertedWith("Not in White List");
     });
-    it("reverts when attacker signs for themselves submitted via relayer", async function () {
-      const { signature } = await signTransfer(attacker, domain, attacker.address, TRANSFER_PASS);
-      await expect(holder.connect(userThree).setNewOwner(attacker.address, TRANSFER_PASS, signature))
-        .to.be.revertedWith("OTP: invalid signature");
-    });
-    it("reverts when newOwner is swapped", async function () {
+    it("reverts when newOwner is swapped to non-whitelisted address", async function () {
       const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
       await expect(holder.connect(attacker).setNewOwner(attacker.address, TRANSFER_PASS, signature))
+        .to.be.revertedWith("Not in White List");
+    });
+    it("reverts when newOwner is swapped between whitelisted addresses", async function () {
+      // whitelist userThree too, then try to swap sig for userTwo → userThree
+      await applyAndWaitWL(holder, userThree.address);
+      const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
+      await expect(holder.setNewOwner(userThree.address, TRANSFER_PASS, signature))
         .to.be.revertedWith("OTP: invalid signature");
     });
     it("reverts with zero address", async function () {
@@ -327,65 +442,115 @@ describe("Holder", function () {
   });
 
   // ──────────────────────────────────────────────────────────────────
-  describe("setTransferPassword", function () {
+  describe("applyNewPassword + setTransferPassword", function () {
+    it("non-owner cannot applyNewPassword", async function () {
+      await expect(
+        holder.connect(attacker).applyNewPassword(passHash(NEW_TRANSFER_PASS))
+      ).to.be.revertedWith("Ownable: caller is not the owner");
+    });
+
+    it("cannot setTransferPassword without applyNewPassword first", async function () {
+      await expect(
+        holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
+      ).to.be.revertedWith("No request found");
+    });
+
+    it("cannot setTransferPassword before 1-day delay", async function () {
+      await holder.applyNewPassword(passHash(NEW_TRANSFER_PASS));
+      await expect(
+        holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
+      ).to.be.revertedWith("Too early");
+    });
+
     it("non-owner cannot change transfer password", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_TRANSFER_PASS));
       await expect(
         holder.connect(userTwo).setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
       ).to.be.revertedWith("Ownable: caller is not the owner");
     });
+
     it("owner cannot change with wrong old password", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_TRANSFER_PASS));
       await expect(
         holder.setTransferPassword("wrongpass", passHash(NEW_TRANSFER_PASS))
       ).to.be.revertedWith("WRONG PASS");
     });
+
     it("owner cannot change with empty old password", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_TRANSFER_PASS));
       await expect(
         holder.setTransferPassword("", passHash(NEW_TRANSFER_PASS))
       ).to.be.revertedWith("WRONG PASS");
     });
-    it("owner can rotate transfer password with correct old password", async function () {
+
+    it("owner can rotate transfer password after 1-day delay", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_TRANSFER_PASS));
       await expect(
         holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
       ).to.not.be.reverted;
     });
+
+    it("setTransferPassword consumes the request — cannot reuse", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_TRANSFER_PASS));
+      await holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS));
+      await expect(
+        holder.setTransferPassword(NEW_TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
+      ).to.be.revertedWith("No request found");
+    });
+
     it("OTP resets after transfer password rotation", async function () {
       const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature);
       expect(await holder.isTPassUsed()).to.equal(true);
+      await applyAndWaitPassword(holder.connect(userTwo), passHash(NEW_TRANSFER_PASS));
       await holder.connect(userTwo).setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS));
       expect(await holder.isTPassUsed()).to.equal(false);
     });
+
     it("old transfer password fails after rotation", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_TRANSFER_PASS));
       await holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS));
       const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
       await expect(holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature))
         .to.be.revertedWith("OTP: wrong password");
     });
+
     it("new transfer password works after rotation", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_TRANSFER_PASS));
       await holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS));
       const { signature } = await signTransfer(owner, domain, userTwo.address, NEW_TRANSFER_PASS);
       await holder.setNewOwner(userTwo.address, NEW_TRANSFER_PASS, signature);
       expect(await holder.owner()).to.equal(userTwo.address);
     });
+
     it("rotating transferPassword does not affect rescuePassword", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_TRANSFER_PASS));
       await holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS));
       await holder.rescueETH(RESCUE_PASS);
       expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(0n);
     });
+
     it("chain of transfers works", async function () {
+      // transfer 1: owner → userTwo (already whitelisted)
       const { signature: sig1 } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, sig1);
       expect(await holder.owner()).to.equal(userTwo.address);
 
+      // whitelist userThree + rotate password
+      await applyAndWaitWL(holder.connect(userTwo), userThree.address);
+      await applyAndWaitPassword(holder.connect(userTwo), passHash(NEW_TRANSFER_PASS));
       await holder.connect(userTwo).setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS));
 
+      // transfer 2: userTwo → userThree
       const { signature: sig2 } = await signTransfer(userTwo, domain, userThree.address, NEW_TRANSFER_PASS);
       await holder.connect(userTwo).setNewOwner(userThree.address, NEW_TRANSFER_PASS, sig2);
       expect(await holder.owner()).to.equal(userThree.address);
     });
+
     it("cannot rotate without knowing old password even if owner", async function () {
       const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature);
+      await applyAndWaitPassword(holder.connect(userTwo), passHash(NEW_TRANSFER_PASS));
       await expect(
         holder.connect(userTwo).setTransferPassword("badguess", passHash(NEW_TRANSFER_PASS))
       ).to.be.revertedWith("WRONG PASS");
@@ -393,41 +558,79 @@ describe("Holder", function () {
   });
 
   // ──────────────────────────────────────────────────────────────────
-  describe("setRescuePassword", function () {
+  describe("applyNewPassword + setRescuePassword", function () {
+    it("cannot setRescuePassword without applyNewPassword first", async function () {
+      await expect(
+        holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS))
+      ).to.be.revertedWith("No request found");
+    });
+
+    it("cannot setRescuePassword before 1-day delay", async function () {
+      await holder.applyNewPassword(passHash(NEW_RESCUE_PASS));
+      await expect(
+        holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS))
+      ).to.be.revertedWith("Too early");
+    });
+
     it("non-owner cannot change rescue password", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_RESCUE_PASS));
       await expect(
         holder.connect(userTwo).setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS))
       ).to.be.revertedWith("Ownable: caller is not the owner");
     });
+
     it("owner cannot change with wrong old password", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_RESCUE_PASS));
       await expect(
         holder.setRescuePassword("wrongpass", passHash(NEW_RESCUE_PASS))
       ).to.be.revertedWith("WRONG PASS");
     });
+
     it("owner cannot change with empty old password", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_RESCUE_PASS));
       await expect(
         holder.setRescuePassword("", passHash(NEW_RESCUE_PASS))
       ).to.be.revertedWith("WRONG PASS");
     });
-    it("owner can rotate rescue password with correct old password", async function () {
+
+    it("owner can rotate rescue password after 1-day delay", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_RESCUE_PASS));
       await expect(
         holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS))
       ).to.not.be.reverted;
     });
+
     it("old rescue password fails after rotation", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_RESCUE_PASS));
       await holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS));
       await expect(holder.rescueETH(RESCUE_PASS)).to.be.revertedWith("WRONG PASS");
     });
+
     it("new rescue password works after rotation", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_RESCUE_PASS));
       await holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS));
       await holder.rescueETH(NEW_RESCUE_PASS);
       expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(0n);
     });
+
     it("rotating rescuePassword does not affect transferPassword", async function () {
+      await applyAndWaitPassword(holder, passHash(NEW_RESCUE_PASS));
       await holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS));
       const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature);
       expect(await holder.owner()).to.equal(userTwo.address);
+    });
+
+    it("passwordRequests slot shared — transfer and rescue hashes are independent", async function () {
+      // apply both, advance time, both usable independently
+      await holder.applyNewPassword(passHash(NEW_TRANSFER_PASS));
+      await holder.applyNewPassword(passHash(NEW_RESCUE_PASS));
+      await ethers.provider.send("evm_increaseTime", [Number(DAY + 1n)]);
+      await ethers.provider.send("evm_mine", []);
+      await holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS));
+      await holder.setRescuePassword(RESCUE_PASS, passHash(NEW_RESCUE_PASS));
+      await holder.rescueETH(NEW_RESCUE_PASS);
+      expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(0n);
     });
   });
 
@@ -456,29 +659,54 @@ describe("Holder", function () {
       await holder.rescueETH(RESCUE_PASS);
       expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(0n);
     });
+    it("setNewOwner still works during reLock period", async function () {
+      await ethers.provider.send("evm_increaseTime", [Number(YEAR + DAY)]);
+      await ethers.provider.send("evm_mine", []);
+      await holder.reLock();
+      const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
+      await holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature);
+      expect(await holder.owner()).to.equal(userTwo.address);
+    });
   });
 
   // ──────────────────────────────────────────────────────────────────
-  describe("constructor — _initialOwner", function () {
+  describe("constructor — _initialOwner + _whiteListedOwner", function () {
     it("developer can deploy to a different initial owner", async function () {
       const HolderFactory = await ethers.getContractFactory("Holder");
       const h = await HolderFactory.connect(owner).deploy(
         userTwo.address,
         passHash(TRANSFER_PASS),
-        passHash(RESCUE_PASS)
+        passHash(RESCUE_PASS),
+        userThree.address
       );
       await h.waitForDeployment();
       expect(await h.owner()).to.equal(userTwo.address);
+      expect(await h.whiteList(userThree.address)).to.equal(true);
     });
+
     it("reverts if _initialOwner is zero address", async function () {
       const HolderFactory = await ethers.getContractFactory("Holder");
       await expect(
         HolderFactory.connect(owner).deploy(
           ethers.ZeroAddress,
           passHash(TRANSFER_PASS),
-          passHash(RESCUE_PASS)
+          passHash(RESCUE_PASS),
+          userTwo.address
         )
       ).to.be.revertedWith("Ownable: new owner is the zero address");
+    });
+
+    it("_initialOwner and _whiteListedOwner can be the same address", async function () {
+      const HolderFactory = await ethers.getContractFactory("Holder");
+      const h = await HolderFactory.connect(owner).deploy(
+        userTwo.address,
+        passHash(TRANSFER_PASS),
+        passHash(RESCUE_PASS),
+        userTwo.address
+      );
+      await h.waitForDeployment();
+      expect(await h.owner()).to.equal(userTwo.address);
+      expect(await h.whiteList(userTwo.address)).to.equal(true);
     });
   });
 

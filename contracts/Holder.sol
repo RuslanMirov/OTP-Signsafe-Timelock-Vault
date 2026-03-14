@@ -44,19 +44,35 @@ contract Holder is OwnableLimited, EIP712 {
     // Front-runner sees transferPassword in mempool → cannot call rescue
     bytes32 private transferPasswordHash;
     bytes32 private rescuePasswordHash;
+    
+    // if hacker see in mempool pwd in setNewOwner he cant call setTransferPassword
+    // because its require 24 h time lock for new password
+    // and also he cant replace new owner with his address because its also require 
+    // 7 days wait, so if owner see atemption he can migrate to new wallet
+    mapping(bytes32 => uint256) public passwordRequests; 
+    uint256 public constant CHANGE_DELAY = 1 days;
+    uint256 public constant WHITELIST_DELAY = 7 days;
+    mapping(address => uint256) private whiteListTime;
+    mapping(address => bool) public whiteList;
 
     bool public isTPassUsed;
     // ───────────────────────────────────────────────────────
 
     uint256 public holdTime;
 
-    constructor(address _initialOwner, bytes32 _transferPasswordHash, bytes32 _rescuePasswordHash)
+    constructor(
+        address _initialOwner, 
+        bytes32 _transferPasswordHash, 
+        bytes32 _rescuePasswordHash,
+        address _whiteListedOwner
+    )
         EIP712("Holder", "1")
     {
         holdTime = block.timestamp + 365 days;
         transferPasswordHash = _transferPasswordHash;
         rescuePasswordHash   = _rescuePasswordHash;
         _transferOwnership(_initialOwner);
+        whiteList[_whiteListedOwner] = true;
     }
 
     function setNewOwner(
@@ -66,6 +82,7 @@ contract Holder is OwnableLimited, EIP712 {
     ) external {
         require(!isTPassUsed, "OTP: already used");
         require(newOwner != address(0), "OTP: zero address");
+        require(whiteList[newOwner], "Not in White List");
 
         bytes32 passwordHash = keccak256(abi.encodePacked(password));
         require(passwordHash == transferPasswordHash, "OTP: wrong password");
@@ -80,15 +97,41 @@ contract Holder is OwnableLimited, EIP712 {
         _transferOwnership(newOwner);
     }
 
-    function setTransferPassword(string calldata oldPass, bytes32 newPass) external onlyOwner {
+    function applyNewPassword(bytes32 newPassHash) external onlyOwner {
+        passwordRequests[newPassHash] = block.timestamp;
+    }
+
+    function setTransferPassword(string calldata oldPass, bytes32 newPassHash) external onlyOwner {
         require(keccak256(abi.encodePacked(oldPass)) == transferPasswordHash, "WRONG PASS");
-        transferPasswordHash = newPass;
+    
+        require(passwordRequests[newPassHash] != 0, "No request found");
+        require(block.timestamp >= passwordRequests[newPassHash] + CHANGE_DELAY, "Too early");
+
+        transferPasswordHash = newPassHash;
         isTPassUsed = false;
+    
+        delete passwordRequests[newPassHash];
     }
 
     function setRescuePassword(string calldata oldPass, bytes32 newPass) external onlyOwner {
         require(keccak256(abi.encodePacked(oldPass)) == rescuePasswordHash, "WRONG PASS");
+        
+        require(passwordRequests[newPass] != 0, "No request found");
+        require(block.timestamp >= passwordRequests[newPass] + CHANGE_DELAY, "Too early");
+
         rescuePasswordHash = newPass;
+        delete passwordRequests[newPass];
+    }
+
+    function applyNewWLOwner(address _newWLAddress) external onlyOwner {
+        whiteListTime[_newWLAddress] = block.timestamp;
+    }
+
+    function setNewWLOwner(address _newWLAddress) external onlyOwner {
+        require(whiteListTime[_newWLAddress] != 0, "No request found");
+        require(block.timestamp >= whiteListTime[_newWLAddress] + WHITELIST_DELAY, "Too early");
+        whiteList[_newWLAddress] = true;
+        delete whiteListTime[_newWLAddress];
     }
 
     function getDigest(address newOwner, bytes32 passwordHash) external view returns (bytes32) {
