@@ -2,8 +2,10 @@
 
 ## Why?
 If somebody steals your private keys, they can't withdraw — funds are time-locked.
-You can transfer ownership to a fresh wallet via a gasless signed tx submitted
+You can transfer ownership by using passwords to a fresh wallet via a gasless signed tx submitted
 by anyone — even through the public mempool.
+
+> **Lost your passwords?** No problem — `withdrawETH` and `withdrawERC20` require no password at all. Just wait for the unlock date (`holdTime`) to expire and withdraw with your wallet alone. The time-lock is always your last resort.
 
 ---
 
@@ -87,7 +89,13 @@ contract verifies:
 Keys stolen + you know transferPassword → setNewOwner to whitelisted wallet (mempool is safe)
 Keys stolen + forgot transferPassword   → wait for holdTime to expire → withdrawETH
 Urgent + keys safe                      → rescueETH(rescuePassword) — bypasses holdTime
+Lost ALL passwords                      → wait for holdTime to expire → withdrawETH (wallet only)
 ```
+
+> **Lost your passwords?** Don't panic — the time-lock is your last resort.
+> `withdrawETH` and `withdrawERC20` only require `onlyOwner`, no password at all.
+> Wait for `holdTime` to expire, then withdraw with your wallet alone.
+> No password, no signature, no OTP — just the key.
 
 ---
 
