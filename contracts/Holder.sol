@@ -3,7 +3,30 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/interfaces/IERC20.sol";
+
+library SafeERC20Transfer {
+    error SafeERC20FailedOperation(address token);
+
+    function safeTransfer(IERC20 token, address to, uint256 value) internal {
+        assembly ("memory-safe") {
+            let fmp := mload(0x40)
+            mstore(0x00, 0xa9059cbb00000000000000000000000000000000000000000000000000000000)
+            mstore(0x04, and(to, 0xffffffffffffffffffffffffffffffffffffffff))
+            mstore(0x24, value)
+            let success := call(gas(), token, 0, 0x00, 0x44, 0x00, 0x20)
+            if iszero(and(
+                or(iszero(returndatasize()), and(gt(returndatasize(), 0x1f), eq(mload(0x00), 1))),
+                success
+            )) {
+                mstore(fmp, 0x5274afe700000000000000000000000000000000000000000000000000000000)
+                mstore(add(fmp, 0x04), token)
+                revert(fmp, 0x24)
+            }
+            mstore(0x40, fmp)
+        }
+    }
+}
 
 contract OwnableLimited {
     address private _owner;
@@ -31,8 +54,7 @@ contract OwnableLimited {
 }
 
 contract Holder is OwnableLimited, EIP712 {
-    using SafeERC20 for IERC20;
-
+    using SafeERC20Transfer for IERC20;
     // ── OTP ────────────────────────────────────────────────
     bytes32 public constant TRANSFER_TYPEHASH = keccak256(
         "TransferOwnership(address newOwner,bytes32 passwordHash)"
