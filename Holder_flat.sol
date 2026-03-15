@@ -1,13 +1,6 @@
-// Sources flattened with hardhat v2.28.6 https://hardhat.org
-
 // SPDX-License-Identifier: MIT
 
-// File @openzeppelin/contracts/token/ERC20/IERC20.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.4.0) (token/ERC20/IERC20.sol)
-
-pragma solidity >=0.4.16;
+pragma solidity ^0.8.20;
 
 /**
  * @dev Interface of the ERC-20 standard as defined in the ERC.
@@ -84,22 +77,6 @@ interface IERC20 {
     function transferFrom(address from, address to, uint256 value) external returns (bool);
 }
 
-
-// File @openzeppelin/contracts/interfaces/IERC20.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.4.0) (interfaces/IERC20.sol)
-
-pragma solidity >=0.4.16;
-
-
-// File @openzeppelin/contracts/utils/math/SafeCast.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.6.0) (utils/math/SafeCast.sol)
-// This file was procedurally generated from scripts/generate/templates/SafeCast.js.
-
-pragma solidity ^0.8.20;
 
 /**
  * @dev Wrappers over Solidity's uintXX/intXX/bool casting operators with added overflow
@@ -1258,14 +1235,6 @@ library SafeCast {
     }
 }
 
-
-// File @openzeppelin/contracts/utils/Panic.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (utils/Panic.sol)
-
-pragma solidity ^0.8.20;
-
 /**
  * @dev Helper library for emitting standardized panic codes.
  *
@@ -1318,14 +1287,6 @@ library Panic {
         }
     }
 }
-
-
-// File @openzeppelin/contracts/utils/math/Math.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.6.0) (utils/math/Math.sol)
-
-pragma solidity ^0.8.20;
 
 
 /**
@@ -2085,13 +2046,6 @@ library Math {
 }
 
 
-// File @openzeppelin/contracts/utils/Bytes.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.6.0) (utils/Bytes.sol)
-
-pragma solidity ^0.8.24;
-
 /**
  * @dev Bytes operations.
  */
@@ -2419,13 +2373,6 @@ library Bytes {
 }
 
 
-// File @openzeppelin/contracts/interfaces/IERC5267.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.4.0) (interfaces/IERC5267.sol)
-
-pragma solidity >=0.4.16;
-
 interface IERC5267 {
     /**
      * @dev MAY be emitted to signal that the domain could have changed.
@@ -2449,14 +2396,6 @@ interface IERC5267 {
             uint256[] memory extensions
         );
 }
-
-
-// File @openzeppelin/contracts/utils/math/SignedMath.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (utils/math/SignedMath.sol)
-
-pragma solidity ^0.8.20;
 
 /**
  * @dev Standard signed math utilities missing in the Solidity language.
@@ -2519,17 +2458,6 @@ library SignedMath {
         }
     }
 }
-
-
-// File @openzeppelin/contracts/utils/Strings.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.6.0) (utils/Strings.sol)
-
-pragma solidity ^0.8.24;
-
-
-
 
 /**
  * @dev String operations.
@@ -3054,14 +2982,6 @@ library Strings {
     }
 }
 
-
-// File @openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.6.0) (utils/cryptography/MessageHashUtils.sol)
-
-pragma solidity ^0.8.24;
-
 /**
  * @dev Signature message hash utilities for producing digests to be consumed by {ECDSA} recovery or signing.
  *
@@ -3284,15 +3204,6 @@ library MessageHashUtils {
     }
 }
 
-
-// File @openzeppelin/contracts/utils/StorageSlot.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (utils/StorageSlot.sol)
-// This file was procedurally generated from scripts/generate/templates/StorageSlot.js.
-
-pragma solidity ^0.8.20;
-
 /**
  * @dev Library for reading and writing primitive types to specific storage slots.
  *
@@ -3432,13 +3343,6 @@ library StorageSlot {
 }
 
 
-// File @openzeppelin/contracts/utils/ShortStrings.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.5.0) (utils/ShortStrings.sol)
-
-pragma solidity ^0.8.20;
-
 // | string  | 0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA   |
 // | length  | 0x                                                              BB |
 type ShortString is bytes32;
@@ -3554,16 +3458,6 @@ library ShortStrings {
         }
     }
 }
-
-
-// File @openzeppelin/contracts/utils/cryptography/EIP712.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.5.0) (utils/cryptography/EIP712.sol)
-
-pragma solidity ^0.8.24;
-
-
 
 /**
  * @dev https://eips.ethereum.org/EIPS/eip-712[EIP-712] is a standard for hashing and signing of typed structured data.
@@ -3717,13 +3611,6 @@ abstract contract EIP712 is IERC5267 {
     }
 }
 
-
-// File @openzeppelin/contracts/utils/cryptography/ECDSA.sol@v5.6.1
-
-// Original license: SPDX_License_Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.6.0) (utils/cryptography/ECDSA.sol)
-
-pragma solidity ^0.8.20;
 
 /**
  * @dev Elliptic Curve Digital Signature Algorithm (ECDSA) operations.
@@ -4004,14 +3891,6 @@ library ECDSA {
         }
     }
 }
-
-
-// File contracts/Holder.sol
-
-// Original license: SPDX_License_Identifier: MIT
-pragma solidity ^0.8.20;
-
-
 
 library SafeERC20Transfer {
     error SafeERC20FailedOperation(address token);
