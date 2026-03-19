@@ -245,6 +245,10 @@ describe("Holder", function () {
     it("owner cannot withdraw before holdTime", async function () {
       await expect(holder.withdrawETH()).to.be.revertedWith("EARLY");
     });
+    it("non-owner cannot withdraw", async function () {
+      await expect(holder.connect(userTwo).withdrawETH())
+        .to.be.revertedWith("Ownable: caller is not the owner");
+    });
     it("non-owner cannot withdraw after holdTime", async function () {
       await ethers.provider.send("evm_increaseTime", [Number(YEAR + DAY)]);
       await ethers.provider.send("evm_mine", []);
