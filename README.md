@@ -99,12 +99,16 @@ Lost ALL passwords                      → wait for holdTime to expire → with
 
 ---
 
-## ⚠️ If You Overslept the 7-Day Window
+## ⚠️ If You Overslept the 7-Day Window => use private RPC
 
 If you missed the monitoring window and the attacker's `applyNewPassword` or
 `applyNewWLOwner` request has already matured — **do not submit your recovery tx
 through the public mempool**. The attacker is watching and will front-run any tx
 that exposes your password or triggers an ownership transfer.
+
+## ⚠️ Whitelisted addresses compromised => use privte RPC
+
+If you suspect one of your whitelisted addresses was also compromised, submit all recovery transactions through a private RPC (e.g. Flashbots Protect) to prevent front-running.
 
 **Use a private RPC instead:**
 
@@ -120,11 +124,10 @@ visible to searchers or front-runners.
 
 **Step-by-step:**
 ```
-1. Switch your wallet RPC to a private endpoint (e.g. Flashbots Protect)
-2. Submit one of:
+1. Switch to private endpoint in transferOwnershipOTP.js script
+2. Submit:
    - setNewOwner(yourWhitelistedWallet, transferPassword, signature)
-   - rescueETH(rescuePassword)  ← if you need funds out immediately
-3. Tx lands in the next block with zero mempool exposure
+3. Tx lands in the next block with zero mempool exposure, and new owner can now rescueETH or just wait for wihdraw
 ```
 
 > Even if the attacker's `setNewWLOwner` or `setTransferPassword` tx is pending —
