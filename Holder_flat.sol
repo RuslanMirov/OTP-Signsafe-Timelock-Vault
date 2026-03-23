@@ -1235,6 +1235,7 @@ library SafeCast {
     }
 }
 
+
 /**
  * @dev Helper library for emitting standardized panic codes.
  *
@@ -2045,7 +2046,6 @@ library Math {
     }
 }
 
-
 /**
  * @dev Bytes operations.
  */
@@ -2458,6 +2458,7 @@ library SignedMath {
         }
     }
 }
+
 
 /**
  * @dev String operations.
@@ -3342,7 +3343,6 @@ library StorageSlot {
     }
 }
 
-
 // | string  | 0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA   |
 // | length  | 0x                                                              BB |
 type ShortString is bytes32;
@@ -3458,6 +3458,7 @@ library ShortStrings {
         }
     }
 }
+
 
 /**
  * @dev https://eips.ethereum.org/EIPS/eip-712[EIP-712] is a standard for hashing and signing of typed structured data.
@@ -3891,6 +3892,7 @@ library ECDSA {
         }
     }
 }
+
 
 library SafeERC20Transfer {
     error SafeERC20FailedOperation(address token);
