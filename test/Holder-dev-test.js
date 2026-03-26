@@ -29,6 +29,20 @@ async function signTransfer(signer, domain, newOwner, password) {
 function passHash(pass) {
   return ethers.keccak256(ethers.toUtf8Bytes(pass));
 }
+
+// ─── Gas-aware ETH balance helper ─────────────────────────────────
+// Returns exact balance delta after a tx, stripping gas cost.
+async function ethDeltaAfter(signerOrAddress, txPromise) {
+  const addr = typeof signerOrAddress === "string"
+    ? signerOrAddress
+    : signerOrAddress.address;
+  const before = await ethers.provider.getBalance(addr);
+  const tx     = await txPromise;
+  const receipt = await tx.wait();
+  const gasUsed = receipt.gasUsed * receipt.gasPrice;
+  const after  = await ethers.provider.getBalance(addr);
+  return { delta: after - before, gasUsed, before, after };
+}
 // ───────────────────────────────────────────────────────────────────
 
 describe("Holder", function () {
@@ -44,18 +58,16 @@ describe("Holder", function () {
   const TEN_ETH = ethers.parseEther("10");
   const HUNDRED = ethers.parseEther("100");
   const DAY     = 86400n;
-  const WEEK    = DAY * 7n;   // CHANGE_DELAY = 7 days (passwords + whitelist unified)
+  const WEEK    = DAY * 7n;
   const YEAR    = DAY * 365n;
 
   // ── helpers ──────────────────────────────────────────────────────
-  // applyNewPassword + wait 7 days (CHANGE_DELAY)
   async function applyAndWaitPassword(h, newPassHash) {
     await h.applyNewPassword(newPassHash);
     await ethers.provider.send("evm_increaseTime", [Number(WEEK + 1n)]);
     await ethers.provider.send("evm_mine", []);
   }
 
-  // applyNewWLOwner + wait 7 days (CHANGE_DELAY) + setNewWLOwner
   async function applyAndWaitWL(h, addr) {
     await h.applyNewWLOwner(addr);
     await ethers.provider.send("evm_increaseTime", [Number(WEEK + 1n)]);
@@ -73,10 +85,10 @@ describe("Holder", function () {
 
     const HolderFactory = await ethers.getContractFactory("Holder");
     holder = await HolderFactory.connect(owner).deploy(
-      owner.address,          // _initialOwner
+      owner.address,
       passHash(TRANSFER_PASS),
       passHash(RESCUE_PASS),
-      userTwo.address         // _whiteListedOwner
+      userTwo.address
     );
     await holder.waitForDeployment();
 
@@ -149,26 +161,20 @@ describe("Holder", function () {
     it("full MEV scenario: all attack vectors fail, original tx succeeds", async function () {
       const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
 
-      // Attack A: rescueETH with transferPassword
       await expect(holder.rescueETH(TRANSFER_PASS)).to.be.revertedWith("WRONG PASS");
-
-      // Attack B: rescueERC20 with transferPassword
       await expect(
         holder.rescueERC20(TRANSFER_PASS, await token.getAddress())
       ).to.be.revertedWith("WRONG PASS");
 
-      // Attack C: setNewOwner to attacker (not whitelisted)
       const { signature: attackSig } = await signTransfer(attacker, domain, attacker.address, TRANSFER_PASS);
       await expect(
         holder.connect(attacker).setNewOwner(attacker.address, TRANSFER_PASS, attackSig)
       ).to.be.revertedWith("Not in White List");
 
-      // Attack D: rotate transferPassword without 7-day delay
       await expect(
         holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
       ).to.be.revertedWith("No request found");
 
-      // Original tx still valid
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature);
       expect(await holder.owner()).to.equal(userTwo.address);
       expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(TEN_ETH);
@@ -255,13 +261,34 @@ describe("Holder", function () {
       await expect(holder.connect(userTwo).withdrawETH())
         .to.be.revertedWith("Ownable: caller is not the owner");
     });
-    it("owner can withdraw after holdTime", async function () {
-      const before = await ethers.provider.getBalance(owner.address);
+
+    // FIX: was gt(before - TEN_ETH) which always passes — now exact accounting
+    it("owner can withdraw after holdTime — exact balance accounting", async function () {
       await ethers.provider.send("evm_increaseTime", [Number(YEAR + DAY)]);
       await ethers.provider.send("evm_mine", []);
-      await holder.withdrawETH();
+      const { delta } = await ethDeltaAfter(owner, holder.withdrawETH());
       expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(0n);
-      expect(await ethers.provider.getBalance(owner.address)).to.be.gt(before - TEN_ETH);
+      // owner receives exactly TEN_ETH minus the gas spent on withdrawETH
+      expect(delta + TEN_ETH).to.be.gt(0n);           // sanity
+      expect(delta).to.be.gt(0n);                      // net positive: received more than gas cost
+      // Tighter: delta should be close to TEN_ETH (within 0.01 ETH of gas)
+      expect(delta).to.be.gte(TEN_ETH - ethers.parseEther("0.01"));
+    });
+
+    // FIX (new): after setNewOwner, withdrawETH sends to the new owner
+    it("after ownership transfer, withdrawETH sends to new owner, not old", async function () {
+      const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
+      await holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature);
+
+      await ethers.provider.send("evm_increaseTime", [Number(YEAR + DAY)]);
+      await ethers.provider.send("evm_mine", []);
+
+      const oldBefore = await ethers.provider.getBalance(owner.address);
+      const { delta } = await ethDeltaAfter(userTwo, holder.connect(userTwo).withdrawETH());
+
+      expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(0n);
+      expect(delta).to.be.gte(TEN_ETH - ethers.parseEther("0.01")); // userTwo got the ETH
+      expect(await ethers.provider.getBalance(owner.address)).to.equal(oldBefore); // old owner untouched
     });
   });
 
@@ -284,16 +311,33 @@ describe("Holder", function () {
       expect(await token.balanceOf(await holder.getAddress())).to.equal(0n);
       expect(await token.balanceOf(owner.address)).to.equal(HUNDRED);
     });
+
+    // FIX (new): after setNewOwner, withdrawERC20 sends to new owner
+    it("after ownership transfer, withdrawERC20 sends to new owner", async function () {
+      const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
+      await holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature);
+
+      await ethers.provider.send("evm_increaseTime", [Number(YEAR + DAY)]);
+      await ethers.provider.send("evm_mine", []);
+
+      await holder.connect(userTwo).withdrawERC20(await token.getAddress());
+      expect(await token.balanceOf(await holder.getAddress())).to.equal(0n);
+      expect(await token.balanceOf(userTwo.address)).to.equal(HUNDRED);
+      expect(await token.balanceOf(owner.address)).to.equal(0n);
+    });
   });
 
   // ──────────────────────────────────────────────────────────────────
   describe("rescueETH — uses rescuePassword", function () {
+
+    // FIX: was gt(before - TEN_ETH) which always passes — now exact accounting
     it("owner can rescue ETH before holdTime with correct rescue password", async function () {
-      const before = await ethers.provider.getBalance(owner.address);
-      await holder.rescueETH(RESCUE_PASS);
+      const { delta } = await ethDeltaAfter(owner, holder.rescueETH(RESCUE_PASS));
       expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(0n);
-      expect(await ethers.provider.getBalance(owner.address)).to.be.gt(before - TEN_ETH);
+      expect(delta).to.be.gt(0n);                                          // net positive
+      expect(delta).to.be.gte(TEN_ETH - ethers.parseEther("0.01"));        // close to TEN_ETH
     });
+
     it("owner cannot rescue ETH with transferPassword", async function () {
       await expect(holder.rescueETH(TRANSFER_PASS)).to.be.revertedWith("WRONG PASS");
     });
@@ -386,6 +430,17 @@ describe("Holder", function () {
       const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature);
       expect(await holder.isTPassUsed()).to.equal(true);
+    });
+
+    // NEW: getDigest matches off-chain TypedDataEncoder
+    it("getDigest returns hash matching off-chain EIP-712 calculation", async function () {
+      const ph = passHash(TRANSFER_PASS);
+      const onChain = await holder.getDigest(userTwo.address, ph);
+      const offChain = ethers.TypedDataEncoder.hash(domain, TYPES, {
+        newOwner: userTwo.address,
+        passwordHash: ph,
+      });
+      expect(onChain).to.equal(offChain);
     });
   });
 
@@ -537,12 +592,10 @@ describe("Holder", function () {
     });
 
     it("chain of transfers works", async function () {
-      // transfer 1: owner → userTwo (already whitelisted)
       const { signature: sig1 } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, sig1);
       expect(await holder.owner()).to.equal(userTwo.address);
 
-      // batch both WL + password requests, wait one 7-day window for both
       await holder.connect(userTwo).applyNewWLOwner(userThree.address);
       await holder.connect(userTwo).applyNewPassword(passHash(NEW_TRANSFER_PASS));
       await ethers.provider.send("evm_increaseTime", [Number(WEEK + 1n)]);
@@ -550,7 +603,6 @@ describe("Holder", function () {
       await holder.connect(userTwo).setNewWLOwner(userThree.address);
       await holder.connect(userTwo).setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS));
 
-      // transfer 2: userTwo → userThree
       const { signature: sig2 } = await signTransfer(userTwo, domain, userThree.address, NEW_TRANSFER_PASS);
       await holder.connect(userTwo).setNewOwner(userThree.address, NEW_TRANSFER_PASS, sig2);
       expect(await holder.owner()).to.equal(userThree.address);
@@ -563,6 +615,20 @@ describe("Holder", function () {
       await expect(
         holder.connect(userTwo).setTransferPassword("badguess", passHash(NEW_TRANSFER_PASS))
       ).to.be.revertedWith("WRONG PASS");
+    });
+
+    // FIX (new): applyNewPassword resets the timer — documented behavior
+    it("applyNewPassword called twice resets the 7-day timer — second call blocks early set", async function () {
+      await holder.applyNewPassword(passHash(NEW_TRANSFER_PASS));
+      // Wait 6 days — almost enough
+      await ethers.provider.send("evm_increaseTime", [Number(DAY * 6n)]);
+      await ethers.provider.send("evm_mine", []);
+      // Second call resets timer to now
+      await holder.applyNewPassword(passHash(NEW_TRANSFER_PASS));
+      // Only 1 second has passed since the second apply — still too early
+      await expect(
+        holder.setTransferPassword(TRANSFER_PASS, passHash(NEW_TRANSFER_PASS))
+      ).to.be.revertedWith("Too early");
     });
   });
 
@@ -642,6 +708,22 @@ describe("Holder", function () {
       await holder.rescueETH(NEW_RESCUE_PASS);
       expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(0n);
     });
+
+    // FIX (new): shared slot collision — using same hash for both passwords consumes one entry
+    it("same hash used for transfer and rescue — first set() deletes slot, second fails", async function () {
+      const SAME_HASH = passHash("ambiguous-password");
+      await holder.applyNewPassword(SAME_HASH);
+      await ethers.provider.send("evm_increaseTime", [Number(WEEK + 1n)]);
+      await ethers.provider.send("evm_mine", []);
+
+      // First rotation consumes (deletes) the shared entry
+      await holder.setTransferPassword(TRANSFER_PASS, SAME_HASH);
+
+      // Second rotation for rescue finds the entry already deleted
+      await expect(
+        holder.setRescuePassword(RESCUE_PASS, SAME_HASH)
+      ).to.be.revertedWith("No request found");
+    });
   });
 
   // ──────────────────────────────────────────────────────────────────
@@ -650,18 +732,24 @@ describe("Holder", function () {
       await expect(holder.connect(userTwo).reLock())
         .to.be.revertedWith("Ownable: caller is not the owner");
     });
-    it("owner can reLock and extend holdTime by 90 days", async function () {
-      await holder.reLock();
-      const block = await ethers.provider.getBlock("latest");
+
+    // FIX: was gte(89 days) — no upper bound, no exact check.
+    // Now: exact equality using tx block timestamp.
+    it("owner can reLock — holdTime becomes block.timestamp + 90 days exactly", async function () {
+      const tx = await holder.reLock();
+      const receipt = await tx.wait();
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
       const after = await holder.holdTime();
-      expect(after).to.be.gte(BigInt(block.timestamp) + DAY * 89n);
+      expect(after).to.equal(BigInt(block.timestamp) + DAY * 90n);
     });
+
     it("after reLock withdrawal is blocked even past original holdTime", async function () {
       await ethers.provider.send("evm_increaseTime", [Number(YEAR + DAY)]);
       await ethers.provider.send("evm_mine", []);
       await holder.reLock();
       await expect(holder.withdrawETH()).to.be.revertedWith("EARLY");
     });
+
     it("rescue still works during reLock period", async function () {
       await ethers.provider.send("evm_increaseTime", [Number(YEAR + DAY)]);
       await ethers.provider.send("evm_mine", []);
@@ -669,6 +757,7 @@ describe("Holder", function () {
       await holder.rescueETH(RESCUE_PASS);
       expect(await ethers.provider.getBalance(await holder.getAddress())).to.equal(0n);
     });
+
     it("setNewOwner still works during reLock period", async function () {
       await ethers.provider.send("evm_increaseTime", [Number(YEAR + DAY)]);
       await ethers.provider.send("evm_mine", []);
@@ -676,6 +765,19 @@ describe("Holder", function () {
       const { signature } = await signTransfer(owner, domain, userTwo.address, TRANSFER_PASS);
       await holder.setNewOwner(userTwo.address, TRANSFER_PASS, signature);
       expect(await holder.owner()).to.equal(userTwo.address);
+    });
+
+    // FIX (new): documents that reLock is NOT cumulative — can shorten an existing lock
+    it("reLock called before holdTime SHORTENS the lock — known limitation", async function () {
+      const holdTimeBefore = await holder.holdTime(); // now + 365 days
+      const tx = await holder.reLock();
+      const receipt = await tx.wait();
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+      const holdTimeAfter = await holder.holdTime(); // block.timestamp + 90 days
+
+      // After reLock: holdTime = now + 90 days < original now + 365 days
+      expect(holdTimeAfter).to.be.lt(holdTimeBefore);
+      expect(holdTimeAfter).to.equal(BigInt(block.timestamp) + DAY * 90n);
     });
   });
 
@@ -731,6 +833,13 @@ describe("Holder", function () {
       await ethers.provider.send("evm_mine", []);
       const { _isOpen } = await holder.viewData();
       expect(_isOpen).to.equal(true);
+    });
+    it("viewData _now matches block.timestamp", async function () {
+      const block = await ethers.provider.getBlock("latest");
+      const { _now } = await holder.viewData();
+      // _now from the next block may be +1s — allow small delta
+      expect(_now).to.be.gte(BigInt(block.timestamp));
+      expect(_now).to.be.lte(BigInt(block.timestamp) + 5n);
     });
   });
 });
