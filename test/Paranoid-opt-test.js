@@ -209,7 +209,7 @@ describe("Holder — PARANOID ADVERSARIAL SUITE", function () {
 
     beforeEach(async function () {
       const SAME_PASS = "same-password-for-both";
-      const HolderFactory = await ethers.getContractFactory("Holder");
+      const HolderFactory = await ethers.getContractFactory("HolderOptimized");
       h = await HolderFactory.connect(owner).deploy(
         owner.address,
         passHash(SAME_PASS), // transferPasswordHash
@@ -383,7 +383,7 @@ describe("Holder — PARANOID ADVERSARIAL SUITE", function () {
 
     it("ATTACK: cross-contract replay — sig from this contract fails on different contract", async function () {
       // Deploy second holder
-      const HolderFactory = await ethers.getContractFactory("Holder");
+      const HolderFactory = await ethers.getContractFactory("HolderOptimized");
       const holder2 = await HolderFactory.connect(owner).deploy(
         owner.address,
         passHash(TRANSFER_PASS),
