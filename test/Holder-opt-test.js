@@ -78,7 +78,7 @@ describe("HolderOptimized", function () {
   async function deployAll() {
     [owner, userTwo, userThree, attacker] = await ethers.getSigners();
 
-    const TokenFactory = await ethers.getContractFactory("TestToken");
+    const TokenFactory = await ethers.getContractFactory("USDT");
     token = await TokenFactory.deploy(HUNDRED);
     await token.waitForDeployment();
 
