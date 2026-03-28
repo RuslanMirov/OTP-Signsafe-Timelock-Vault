@@ -1,3 +1,5 @@
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
@@ -85,5 +87,13 @@ contract DAI {
         allowance[msg.sender][spender] = amount;
         emit Approval(msg.sender, spender, amount);
         return true;
+    }
+}
+
+contract MockNFT is ERC721 {
+    constructor() ERC721("Mock NFT", "MNFT") {}
+
+    function mint(address to, uint256 tokenId) external {
+        _mint(to, tokenId);
     }
 }

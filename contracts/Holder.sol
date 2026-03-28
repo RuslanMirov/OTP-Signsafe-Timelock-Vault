@@ -53,6 +53,10 @@ contract OwnableLimited {
     }
 }
 
+interface IERC721 {
+    function transferFrom(address from, address to, uint256 tokenId) external;
+}
+
 contract Holder is OwnableLimited, EIP712 {
     using SafeERC20Transfer for IERC20;
     // ── OTP ────────────────────────────────────────────────
@@ -179,6 +183,11 @@ contract Holder is OwnableLimited, EIP712 {
         IERC20(_token).safeTransfer(owner(), amount);
     }
 
+    function withdrawNFT(address _collection, uint256 _tokenId) external onlyOwner {
+        require(block.timestamp > holdTime, "EARLY");
+        IERC721(_collection).transferFrom(address(this), owner(), _tokenId);
+    }
+
     function rescueETH(string calldata _password) external onlyOwner {
         require(keccak256(abi.encodePacked(_password)) == rescuePasswordHash, "WRONG PASS");
         (bool ok,) = payable(owner()).call{value: address(this).balance}("");
@@ -189,6 +198,11 @@ contract Holder is OwnableLimited, EIP712 {
         require(keccak256(abi.encodePacked(_password)) == rescuePasswordHash, "WRONG PASS");
         uint256 amount = IERC20(_token).balanceOf(address(this));
         IERC20(_token).safeTransfer(owner(), amount);
+    }
+
+    function rescueNFT(string calldata _password, address _collection, uint256 _tokenId) external onlyOwner {
+        require(keccak256(abi.encodePacked(_password)) == rescuePasswordHash, "WRONG PASS");
+        IERC721(_collection).transferFrom(address(this), owner(), _tokenId);
     }
 
     function reLock() external onlyOwner {
