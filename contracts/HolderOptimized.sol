@@ -337,6 +337,16 @@ contract HolderOptimized is OwnableLimited, EIP712 {
 
     uint256 public holdTime;
 
+    event WLApplicationSubmitted(
+        address indexed candidate,
+        uint256 maturesAt
+    );
+
+    event PasswordRotationQueued(
+        bytes32 indexed newPassHash,
+        uint256 maturesAt
+    );
+
     constructor(
         address _initialOwner,
         bytes32 _transferPasswordHash,
@@ -376,6 +386,7 @@ contract HolderOptimized is OwnableLimited, EIP712 {
 
     function applyNewPassword(bytes32 newPassHash) external onlyOwner {
         passwordRequests[newPassHash] = block.timestamp;
+        emit PasswordRotationQueued(newPassHash, block.timestamp + CHANGE_DELAY);
     }
 
     function setTransferPassword(string calldata oldPass, bytes32 newPassHash) external onlyOwner {
@@ -397,6 +408,7 @@ contract HolderOptimized is OwnableLimited, EIP712 {
 
     function applyNewWLOwner(address _newWLAddress) external onlyOwner {
         whiteListTime[_newWLAddress] = block.timestamp;
+        emit WLApplicationSubmitted(_newWLAddress, block.timestamp + CHANGE_DELAY);
     }
 
     function setNewWLOwner(address _newWLAddress) external onlyOwner {
